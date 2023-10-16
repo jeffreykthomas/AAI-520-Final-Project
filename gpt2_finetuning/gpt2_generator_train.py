@@ -1,3 +1,4 @@
+import argparse
 import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig, get_linear_schedule_with_warmup
@@ -18,8 +19,19 @@ val_encodings = torch.load(data_folder + 'val_encodings_large.pt')
 test_encodings = torch.load(data_folder + 'test_encodings_large.pt')
 
 # Add args for model size, epochs, etc.
-model_size = 'large'
-num_epochs = 3
+parser = argparse.ArgumentParser(description='Train a GPT2 model on the Ubuntu Dialog Corpus')
+parser.add_argument('--model_size',
+                    type=str,
+                    default='medium',
+                    help='Size of the model to train, "medium" or "large"',
+                    choices=['medium', 'large'])
+parser.add_argument('--num_epochs', type=int, default=3, help='Number of epochs to train for')
+
+model_size = parser.parse_args().model_size
+num_epochs = parser.parse_args().num_epochs
+
+model_name = 'microsoft/DialoGPT-' + model_size
+tokenizer_name = 'tokenizer_' + model_size
 
 
 # Create a custom dataset
@@ -152,17 +164,17 @@ def evaluate_bleu(model, val_loader, tokenizer, device):
 def run_training():
     # Use wandb to track training
     wandb_project = 'aai-520-final-project'
-    wandb_run_name = 'dialo-large-ubuntu-generation'
+    wandb_run_name = 'dialo-' + model_size + '-ubuntu-generation'
 
     wandb.init(project=wandb_project, name=wandb_run_name)
 
     # Load the tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(data_folder + 'tokenizer_large')
+    tokenizer = AutoTokenizer.from_pretrained(data_folder + tokenizer_name)
     tokenizer.pad_token = tokenizer.eos_token
     print('Length of tokenizer:', len(tokenizer))
 
     # Load the model
-    model = AutoModelForCausalLM.from_pretrained("microsoft/DialoGPT-large")
+    model = AutoModelForCausalLM.from_pretrained(model_name)
     model.config.pad_token_id = tokenizer.pad_token_id
     model.resize_token_embeddings(len(tokenizer))
 
