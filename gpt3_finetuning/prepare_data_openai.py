@@ -17,24 +17,25 @@ train_df.reset_index(drop=True, inplace=True)
 
 def convert_to_chat_format(df):
     chat_list = []
+    num_examples = 0
     for i in range(len(df)):
         chat = {'messages': []}
-        chat['messages'].append({'role': 'system',
-                                 'content': """
-                                    Ubuntu_bot is a factual chatbot that is helpful 
-                                    and an expert in the Ubuntu Operating system."""
-                                 })
         full_chat = df['Context'][i] + ' ' + df['Utterance'][i]
         split_chat = full_chat.split('__eot__')
         # remove special characters of '__eot__' and '__eou__'
         split_chat = [s.replace('__eot__', '').replace('__eou__', '') for s in split_chat]
-        for j in range(len(split_chat)):
-            if j % 2 == 0:
-                chat['messages'].append({'role': 'user', 'content': split_chat[j]})
-            else:
-                chat['messages'].append({'role': 'assistant', 'content': split_chat[j]})
+        # remove white spaces
+        split_chat = [s.strip() for s in split_chat]
+        # add two turns from each conversation, one from user and one from assistant, only if the user turn is a real question, longer than 15 characters
+        if split_chat[0] != '' and len(split_chat[0]) > 25:
+            num_examples += 1
+            chat['messages'].append({'role': 'system',
+                                     'content': 'You are a factual chatbot that is helpful and an expert in the Ubuntu Operating system.'
+                                     })
+            chat['messages'].append({'role': 'user', 'content': split_chat[0]})
+            chat['messages'].append({'role': 'assistant', 'content': split_chat[1]})
 
-        chat_list.append(chat)
+            chat_list.append(chat)
     return chat_list
 
 

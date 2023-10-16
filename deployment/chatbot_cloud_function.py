@@ -5,9 +5,9 @@ import os
 import time
 import openai
 import logging
+import tiktoken
 
 logging.basicConfig(level=logging.DEBUG)
-
 
 MEDIUM_API_URL = "https://api-inference.huggingface.co/models/jeffreykthomas/dialo-medium-ubuntu-generation"
 LARGE_API_URL = "https://api-inference.huggingface.co/models/jeffreykthomas/dialo-large-ubuntu-generation"
@@ -16,7 +16,23 @@ headers = {"Authorization": f"Bearer {os.environ['HUGGINGFACEHUB_API_TOKEN']}"}
 openai.api_key = os.environ['OPENAI_API_KEY']
 
 
-def run_dialo_query(question, size='medium'):
+def trim_conversation(conversation, max_tokens=1000):
+    encoding = tiktoken.get_encoding("cl100k_base")
+    current_tokens = 0
+    trimmed_conversation = []
+    for question in reversed(conversation):
+        question_tokens = encoding.encode(question['text'])
+        if current_tokens + len(question_tokens) < max_tokens:
+            trimmed_conversation.append(question)
+            current_tokens += len(question_tokens)
+        else:
+            break
+
+    trimmed_conversation.reverse()
+    return trimmed_conversation
+
+
+def run_dialo_query(conversation, size='medium'):
     logging.debug('running query')
     """
     Queries a fine-tuned Dialo model using a given question.
@@ -27,16 +43,28 @@ def run_dialo_query(question, size='medium'):
     Returns:
     - answer (dict): the answer from the Dialo model.
     """
-    if not question:
-        raise ValueError("Question must not be None or an empty string.")
+    if not conversation:
+        raise ValueError("Conversation must not be None or an empty string.")
 
     if size == 'medium':
         API_URL = MEDIUM_API_URL
     else:
         API_URL = LARGE_API_URL
 
-    # Strip the question of any trailing whitespace and add eot token
-    question = question.strip() + "<|endoftext|>"
+    # Strip the question of any trailing whitespace
+    for question in conversation:
+        question['text'].strip()
+        question['text'].replace('\n', '')
+
+    # Trim conversation to last 1000 tokens
+    trimmed_conversations = trim_conversation(conversation)
+
+    inputs = []
+    for question in trimmed_conversations:
+        inputs.append(question['text'].strip() + ' <|endoftext|>')
+
+    # join the conversation into a single string
+    inputs = ' '.join(inputs)
 
     def query(payload):
         response = requests.post(API_URL, headers=headers, json=payload)
@@ -53,7 +81,7 @@ def run_dialo_query(question, size='medium'):
     while not model_loaded:
         try:
             answer = query({
-                "inputs": question,
+                "inputs": inputs,
                 "parameters": parameters_dict
             })
             if "error" in answer:
@@ -68,15 +96,28 @@ def run_dialo_query(question, size='medium'):
             time.sleep(5)
 
 
-def run_gpt_query(question):
+def run_gpt_query(conversation):
+    # Strip the question of any trailing whitespace and any '/n' characters
+    for question in conversation:
+        question['text'].strip()
+        question['text'].replace('\n', '')
+
+    # Trim conversation to last 2000 tokens
+    trimmed_conversation = trim_conversation(conversation, max_tokens=2000)
+    messages = [{"role": "system",
+                 "content": "You are a factual chatbot that is helpful and an expert in the Ubuntu Operating system."}]
+    for message in trimmed_conversation:
+        if message['user'] == 'Anon':
+            role = 'user'
+        else:
+            role = 'assistant'
+
+        messages.append({"role": role,
+                         "content": message['text']})
+
     completion = openai.ChatCompletion.create(
-        model="ft:gpt-3.5-turbo-0613:mentors-more::89huKvJJ",
-        messages=[
-            {"role": "system",
-             "content": "Ubuntu_bot is a factual chatbot that is helpful and an expert in the Ubuntu Operating system."},
-            {"role": "user",
-             "content": question}
-        ],
+        model="ft:gpt-3.5-turbo-0613:mentors-more::8AMjJzqE",
+        messages=messages,
         temperature=0.5,
         max_tokens=256,
         top_p=1,
@@ -116,20 +157,20 @@ def ubuntu_chat(request):
     """
     request_json = request.get_json(silent=True)
 
-    if request_json and 'question' in request_json and 'model' in request_json:
-        question = request_json['question']['text']
+    if request_json and 'conversation' in request_json and 'model' in request_json:
+        conversation = request_json['conversation']
 
         try:
             if request_json['model'] == 'medium':
                 # Run the query and gather the output
-                output = run_dialo_query(question, size='medium')
+                output = run_dialo_query(conversation, size='medium')
                 logging.debug(f'output: {output}')
             elif request_json['model'] == 'large':
                 # Run the query and gather the output
-                output = run_dialo_query(question, size='large')
+                output = run_dialo_query(conversation, size='large')
             else:
                 # Run the query and gather the output
-                output = run_gpt_query(question)
+                output = run_gpt_query(conversation)
 
             response = make_response(output, 200)
             response.headers.set('Content-Type', 'application/json')

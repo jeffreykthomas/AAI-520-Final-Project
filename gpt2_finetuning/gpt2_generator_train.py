@@ -17,7 +17,12 @@ val_encodings = torch.load(data_folder + 'val_encodings_large.pt')
 
 test_encodings = torch.load(data_folder + 'test_encodings_large.pt')
 
+# Add args for model size, epochs, etc.
+model_size = 'large'
+num_epochs = 3
 
+
+# Create a custom dataset
 class CustomDataset(Dataset):
     def __init__(self, input_encodings):
         self.input_encodings = input_encodings
