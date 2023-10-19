@@ -13,14 +13,14 @@ lock = threading.Lock()
 
 def load_model():
     global inference_engine
-    # Your code to load the model goes here
+    # Load the model
     inference_engine = InferenceEngine("/home/jthomas/Documents/AAI520/final-project/llama2-7b-ubuntu-GPTQ")
     print("Model loaded")
 
 
 def unload_model():
     global inference_engine
-    # Your code to unload the model (if any) goes here
+    # Unload the model (if any)
     inference_engine = None
     print("Model unloaded")
 
