@@ -53,8 +53,8 @@ def run_dialo_query(conversation, size='medium'):
 
     # Strip the question of any trailing whitespace
     for question in conversation:
-        question['text'].strip()
-        question['text'].replace('\n', '')
+        question['text'] = question['text'].strip()
+        question['text'] = question['text'].replace('\n', '')
 
     # Trim conversation to last 1000 tokens
     trimmed_conversations = trim_conversation(conversation)
@@ -99,8 +99,8 @@ def run_dialo_query(conversation, size='medium'):
 def run_gpt_query(conversation):
     # Strip the question of any trailing whitespace and any '/n' characters
     for question in conversation:
-        question['text'].strip()
-        question['text'].replace('\n', '')
+        question['text'] = question['text'].strip()
+        question['text'] = question['text'].replace('\n', '')
 
     # Trim conversation to last 2000 tokens
     trimmed_conversation = trim_conversation(conversation, max_tokens=2000)
@@ -127,6 +127,41 @@ def run_gpt_query(conversation):
     )
 
     return {"message": completion.choices[0]['message']['content']}
+
+
+def run_llama_query(conversation):
+    # Strip the question of any trailing whitespace and any '/n' characters
+    for question in conversation:
+        question['text'] = question['text'].strip()
+        question['text'] = question['text'].replace('\n', '')
+
+    # Trim conversation to last 2000 tokens
+    trimmed_conversation = trim_conversation(conversation, max_tokens=2000)
+
+    messages = ["[INST] As an expert in Ubuntu, respond to this user query: "]
+    for message in trimmed_conversation:
+        if message['user'] == 'Anon':
+            messages.append(f"User: {message['text']}")
+        else:
+            messages.append(f"Expert: {message['text']}")
+
+    messages.append("[/INST]")
+
+    # make request
+    url = "https://e26c-76-167-122-94.ngrok-free.app/generate"
+    headers = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+    }
+    data = {
+        'input_text': ' '.join(messages)
+    }
+    response = requests.post(url, headers=headers, json=data)
+
+    if response.status_code != 200:
+        raise Exception(f"Error: {response.text}")
+
+    return {"message": response.json()['generated_text']}
 
 
 ALLOWED_ORIGINS = ['http://localhost:8080', 'http://localhost:9000', 'https://emotiondetection.app',
@@ -168,9 +203,11 @@ def ubuntu_chat(request):
             elif request_json['model'] == 'large':
                 # Run the query and gather the output
                 output = run_dialo_query(conversation, size='large')
-            else:
+            elif request_json['model'] == 'gpt':
                 # Run the query and gather the output
                 output = run_gpt_query(conversation)
+            else:
+                output = run_llama_query(conversation)
 
             response = make_response(output, 200)
             response.headers.set('Content-Type', 'application/json')

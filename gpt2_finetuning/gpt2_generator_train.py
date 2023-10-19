@@ -1,7 +1,8 @@
 import argparse
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig, get_linear_schedule_with_warmup
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig, get_linear_schedule_with_warmup, \
+    BitsAndBytesConfig
 from torch.cuda.amp import autocast, GradScaler
 import wandb
 from nltk.translate.bleu_score import sentence_bleu
@@ -9,14 +10,6 @@ import numpy as np
 import torch.nn.functional as F
 
 data_folder = 'data/ubuntu/'
-
-# Load the tokenized train data
-train_encodings = torch.load(data_folder + 'train_encodings_large.pt')
-
-# Load the tokenized validation and test data
-val_encodings = torch.load(data_folder + 'val_encodings_large.pt')
-
-test_encodings = torch.load(data_folder + 'test_encodings_large.pt')
 
 # Add args for model size, epochs, etc.
 parser = argparse.ArgumentParser(description='Train a GPT2 model on the Ubuntu Dialog Corpus')
@@ -26,12 +19,37 @@ parser.add_argument('--model_size',
                     help='Size of the model to train, "medium" or "large"',
                     choices=['medium', 'large'])
 parser.add_argument('--num_epochs', type=int, default=3, help='Number of epochs to train for')
+parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training')
+parser.add_argument('--model_type',
+                    type=str,
+                    default='gpt2',
+                    help='Type of model to train',
+                    choices=['gpt2', 'llama'])
 
 model_size = parser.parse_args().model_size
 num_epochs = parser.parse_args().num_epochs
+model_type = parser.parse_args().model_type
 
-model_name = 'microsoft/DialoGPT-' + model_size
-tokenizer_name = 'tokenizer_' + model_size
+if model_type == 'gpt2':
+    model_name = 'microsoft/DialoGPT-' + model_size
+    tokenizer_name = 'tokenizer_' + model_size
+    # Load the tokenized train data
+    if model_size == 'medium':
+        train_encodings = torch.load(data_folder + 'train_encodings.pt')
+        val_encodings = torch.load(data_folder + 'val_encodings.pt')
+        test_encodings = torch.load(data_folder + 'test_encodings.pt')
+    else:
+        train_encodings = torch.load(data_folder + 'train_encodings_large.pt')
+        val_encodings = torch.load(data_folder + 'val_encodings_large.pt')
+        test_encodings = torch.load(data_folder + 'test_encodings_large.pt')
+else:
+    model_name = 'TheBloke/Llama-2-7b-Chat-GPTQ'
+    tokenizer_name = 'TheBloke/Llama-2-7b-Chat-GPTQ'
+    train_encodings = torch.load(data_folder + 'train_encodings_llama.pt')
+    val_encodings = torch.load(data_folder + 'val_encodings_llama.pt')
+    test_encodings = torch.load(data_folder + 'test_encodings_llama.pt')
+
+batch_size = parser.parse_args().batch_size
 
 
 # Create a custom dataset
@@ -57,15 +75,19 @@ class PadCollate():
 
         for idx, seqs in enumerate(batch):
             pad_len = max_len - len(seqs['input_ids'])  # Calculate how much padding is needed
-            input_ids.append(F.pad(torch.LongTensor(seqs['input_ids'].long()), (pad_len, 0), value=self.pad_id))
-            attn_masks.append(
-                F.pad(torch.LongTensor(seqs['attention_mask'].long()), (pad_len, 0), value=0))
+            # if gpt2 pad on the left, else pad on the right
+            if model_type == 'gpt2':
+                input_ids.append(F.pad(torch.LongTensor(seqs['input_ids'].long()), (pad_len, 0), value=self.pad_id))
+                attn_masks.append(
+                    F.pad(torch.LongTensor(seqs['attention_mask'].long()), (pad_len, 0), value=0))
+            else:
+                input_ids.append(F.pad(torch.LongTensor(seqs['input_ids'].long()), (0, pad_len), value=self.pad_id))
+                attn_masks.append(
+                    F.pad(torch.LongTensor(seqs['attention_mask'].long()), (0, pad_len), value=0))
 
         # Stack the tensors along a new dimension
         input_ids = torch.stack(input_ids)
         attn_masks = torch.stack(attn_masks)
-        # token_type_ids = torch.stack(token_type_ids) if token_type_ids else None
-        # labels = torch.stack(labels)
 
         x_encodings = {'input_ids': input_ids,
                        'attention_mask': attn_masks}
@@ -80,9 +102,9 @@ def load_data(train_X, val_X, test_X, pad_id):
     test_dataset = CustomDataset(test_X)
 
     # Create the dataloader
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True, collate_fn=ppd.pad_collate)
-    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False, collate_fn=ppd.pad_collate)
-    test_loader = DataLoader(test_dataset, batch_size=4, shuffle=False, collate_fn=ppd.pad_collate)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=ppd.pad_collate)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=ppd.pad_collate)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=ppd.pad_collate)
 
     return train_loader, val_loader, test_loader
 
@@ -164,17 +186,49 @@ def evaluate_bleu(model, val_loader, tokenizer, device):
 def run_training():
     # Use wandb to track training
     wandb_project = 'aai-520-final-project'
-    wandb_run_name = 'dialo-' + model_size + '-ubuntu-generation'
+    if model_type == 'gpt2':
+        wandb_run_name = 'dialo-' + model_size + '-ubuntu-generation'
+    else:
+        wandb_run_name = 'llama-2-7b-ubuntu-generation'
 
     wandb.init(project=wandb_project, name=wandb_run_name)
 
     # Load the tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(data_folder + tokenizer_name)
-    tokenizer.pad_token = tokenizer.eos_token
+    if model_type == 'gpt2':
+        tokenizer = AutoTokenizer.from_pretrained(data_folder + tokenizer_name)
+        tokenizer.pad_token = tokenizer.eos_token
+        model = AutoModelForCausalLM.from_pretrained(model_name)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained('TheBloke/Llama-2-7b-Chat-GPTQ', padding_side='right', use_fast=True)
+        tokenizer.pad_token = '<pad>'
+        # use_4bit = True
+        #
+        # # Compute dtype for 4-bit base models
+        # bnb_4bit_compute_dtype = "float16"
+        #
+        # # Quantization type (fp4 or nf4)
+        # bnb_4bit_quant_type = "nf4"
+        #
+        # # Activate nested quantization for 4-bit base models (double quantization)
+        # use_nested_quant = False
+        #
+        # # Get the type
+        # compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
+        #
+        # # BitsAndBytesConfig int-4 config
+        # bnb_config = BitsAndBytesConfig(
+        #     load_in_4bit=use_4bit,
+        #     bnb_4bit_quant_type=bnb_4bit_quant_type,
+        #     bnb_4bit_compute_dtype=compute_dtype,
+        #     bnb_4bit_use_double_quant=use_nested_quant,
+        # )
+        model = AutoModelForCausalLM.from_pretrained(model_name,
+                                                     torch_dtype=torch.float16)
+
     print('Length of tokenizer:', len(tokenizer))
 
     # Load the model
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+
     model.config.pad_token_id = tokenizer.pad_token_id
     model.resize_token_embeddings(len(tokenizer))
 
@@ -189,6 +243,16 @@ def run_training():
     no_decay = ["bias", "LayerNorm.weight"]
     num_train_epochs = 3
     accumulation_steps = 4
+
+    num_train_steps = len(train_loader) // accumulation_steps * num_train_epochs
+
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        model = torch.nn.DataParallel(model)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+
     optimizer_grouped_parameters = [
         {
             "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
@@ -197,17 +261,9 @@ def run_training():
         {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
     ]
     optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=5e-5, eps=1e-8)
-    num_train_steps = len(train_loader) // accumulation_steps * num_train_epochs
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=0, num_training_steps=num_train_steps
     )
-
-    if torch.cuda.device_count() > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        model = torch.nn.DataParallel(model)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
 
     best_val_loss = float('inf')
     global_step = 0
@@ -255,8 +311,10 @@ def run_training():
                 # Update learning rate schedule
                 scheduler.step()
 
-                print(f'\rEpoch {epoch + 1}, batch: {batch_idx + 1}/{len(train_loader)}, scaled_loss: {loss.item()}, effective_loss: {loss.item() * accumulation_steps}', end='',
-                      flush=True)
+                print(
+                    f'\rEpoch {epoch + 1}, batch: {batch_idx + 1}/{len(train_loader)}, scaled_loss: {loss.item()}, effective_loss: {loss.item() * accumulation_steps}',
+                    end='',
+                    flush=True)
 
             # Validation loop
             if batch_idx % 1000 == 0:
@@ -296,7 +354,8 @@ def run_training():
 
                 combined_val_loss = sum(val_losses) / len(val_losses)
                 wandb.log(
-                    {'global_step': global_step, 'loss': loss.item() * accumulation_steps, 'val_loss': combined_val_loss, 'lr': scheduler.get_last_lr()[0]})
+                    {'global_step': global_step, 'loss': loss.item() * accumulation_steps,
+                     'val_loss': combined_val_loss, 'lr': scheduler.get_last_lr()[0]})
                 print(
                     f'\nEpoch {epoch + 1}, batch: {batch_idx + 1}/{len(train_loader)}, loss: {loss.item() * accumulation_steps}, val_loss: {combined_val_loss}')
 
@@ -310,13 +369,6 @@ def run_training():
                         model.module.push_to_hub(f'jeffreykthomas/{wandb_run_name}')
                         tokenizer.push_to_hub(f'jeffreykthomas/{wandb_run_name}')
                 model.train()
-
-    model.eval()
-    print('Evaluating BLEU score on test set...')
-    evaluate_bleu(model,
-                  test_loader,
-                  tokenizer,
-                  device)
 
 
 if __name__ == '__main__':

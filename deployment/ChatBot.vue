@@ -44,6 +44,13 @@
             @click="switchModel(2)"
             >GPT-3.5 Turbo</q-btn
           >
+          <q-btn
+            :color="llama2 ? 'primary' : 'light'"
+            class="text-center text-capitalize q-py-sm model-selection"
+            :class="llama2 ? 'text-white' : 'text-black'"
+            @click="switchModel(3)"
+          >Llama2 7B</q-btn
+          >
         </q-btn-group>
       </div>
     </div>
@@ -85,6 +92,8 @@
             </div>
           </div>
         </div>
+      </div>
+      <div class="col-12">
         <h3 class="text-center text-h5 q-my-sm text-italic text-weight-bold">Try asking me:</h3>
       </div>
       <div class="col-12 col-md-3 q-px-md-lg q-px-lg-xl q-py-sm">
@@ -130,7 +139,7 @@
             <q-icon
               v-if="newMessage"
               name="fa-sharp fa-light fa-paper-plane"
-              class="send-icon"
+              class="cursor-pointer q-mr-sm"
               :class="{ 'drawer-expanded': store.getLeftDrawer }"
               size="1.8rem"
               @click="onMessageWasSent(newMessage)"
@@ -144,7 +153,7 @@
 
 <script setup lang="ts">
 import { onMounted, nextTick, ref, Ref, computed } from 'vue';
-import { auth, signInAnonymously } from '../firebase/init';
+import { auth, signInAnonymously } from 'boot/firebase';
 import { Message } from 'components/models';
 import { useJTStore } from 'stores/jt_store';
 //variables
@@ -155,6 +164,7 @@ const currentMessageList = ref<Message[]>([]);
 const dialoMedium = ref(true);
 const dialoLarge = ref(false);
 const gpt = ref(false);
+const llama2 = ref(false);
 const chatFocused = ref(false);
 const showIndicator = ref(false);
 const newMessage = ref('');
@@ -176,8 +186,10 @@ const userBot = computed(() => {
     name = 'Dialo Medium'
   } else if (dialoLarge.value) {
     name = 'Dialo Large'
-  } else {
+  } else if (gpt.value) {
     name = 'GPT-3.5 Turbo'
+  } else {
+    name = 'Llama2 7B'
   }
   return name
 });
@@ -207,6 +219,12 @@ async function switchModel(i: number) {
       dialoLarge.value = false;
       gpt.value = true;
       break;
+    case 3:
+      dialoMedium.value = false;
+      dialoLarge.value = false;
+      gpt.value = false;
+      llama2.value = true;
+      break;
   }
   lastMessage.value = '';
   currentMessageList.value = [];
@@ -230,6 +248,8 @@ async function onMessageWasSent(message: string) {
     model = 'large';
   } else if (gpt.value) {
     model = 'gpt';
+  } else if (llama2.value) {
+    model = 'llama2';
   }
   // Send the maximum number of messages to the model, limit at 1024 tokens
   response = await fetch(
@@ -251,7 +271,8 @@ async function onMessageWasSent(message: string) {
   showIndicator.value = false;
   // Handle the received data
   console.log('data received from server: ', data);
-  let text = gpt.value ? data['message'] : data[0]['generated_text'];
+  let messageModel = gpt.value || llama2.value
+  let text = messageModel ? data['message'] : data[0]['generated_text'];
 
   let botMessage = {
     user: userBot.value,
