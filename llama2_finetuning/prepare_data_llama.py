@@ -2,28 +2,53 @@ import pandas as pd
 import torch
 from transformers import AutoTokenizer
 
-data_folder = 'data/ubuntu/'
-# Load the data
-train_df = pd.read_csv(data_folder + 'train.csv')
-test_df = pd.read_csv(data_folder + 'test.csv')
-val_df = pd.read_csv(data_folder + 'valid.csv')
 
-# Remove whitespace from end of Context and Utterance
-train_df['Context'] = train_df['Context'].apply(lambda x: x.strip())
-train_df['Utterance'] = train_df['Utterance'].apply(lambda x: x.strip())
+def load_data():
+    data_folder = 'data/ubuntu/'
+    # Load the data
+    train_df = pd.read_csv(data_folder + 'train.csv')
+    test_df = pd.read_csv(data_folder + 'test.csv')
+    val_df = pd.read_csv(data_folder + 'valid.csv')
 
-val_df['Context'] = val_df['Context'].apply(lambda x: x.strip())
-val_df['Ground Truth Utterance'] = val_df['Ground Truth Utterance'].apply(lambda x: x.strip())
+    # Remove whitespace from end of Context and Utterance
+    train_df['Context'] = train_df['Context'].apply(lambda x: x.strip())
+    train_df['Utterance'] = train_df['Utterance'].apply(lambda x: x.strip())
 
-test_df['Context'] = test_df['Context'].apply(lambda x: x.strip())
-test_df['Ground Truth Utterance'] = test_df['Ground Truth Utterance'].apply(lambda x: x.strip())
+    val_df['Context'] = val_df['Context'].apply(lambda x: x.strip())
+    val_df['Ground Truth Utterance'] = val_df['Ground Truth Utterance'].apply(lambda x: x.strip())
 
-train_df['Utterance'] = train_df['Utterance'] + ' __eot__'
-val_df['Ground Truth Utterance'] = val_df['Ground Truth Utterance'] + ' __eot__'
-test_df['Ground Truth Utterance'] = test_df['Ground Truth Utterance'] + ' __eot__'
+    test_df['Context'] = test_df['Context'].apply(lambda x: x.strip())
+    test_df['Ground Truth Utterance'] = test_df['Ground Truth Utterance'].apply(lambda x: x.strip())
 
-tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-chat-hf', padding_side='right', use_fast=True)
-tokenizer.pad_token = '<pad>'
+    train_df['Utterance'] = train_df['Utterance'] + ' __eot__'
+    val_df['Ground Truth Utterance'] = val_df['Ground Truth Utterance'] + ' __eot__'
+    test_df['Ground Truth Utterance'] = test_df['Ground Truth Utterance'] + ' __eot__'
+
+    tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-chat-hf', padding_side='right', use_fast=True)
+    tokenizer.pad_token = '<pad>'
+
+    # Create training data for generation, only save data if label = 1
+    train_gen_df = train_df[train_df['Label'] == 1].copy()
+    train_text_context = train_gen_df['Context'].astype(str).tolist()
+    train_text_utterance = train_gen_df['Utterance'].astype(str).tolist()
+
+    # Create validation data for generation
+    val_text_context = val_df['Context'].astype(str).tolist()
+    val_text_ground_truth = val_df['Ground Truth Utterance'].astype(str).tolist()
+
+    # Create test data for generation
+    test_text_context = test_df['Context'].astype(str).tolist()
+    test_text_ground_truth = test_df['Ground Truth Utterance'].astype(str).tolist()
+
+    # Replace all __eot__ strings with </s>
+    train_text_context = [text.replace('__eot__', '</s>') for text in train_text_context]
+    train_text_utterance = [text.replace('__eot__', '</s>') for text in train_text_utterance]
+    val_text_context = [text.replace('__eot__', '</s>') for text in val_text_context]
+    val_text_ground_truth = [text.replace('__eot__', '</s>') for text in val_text_ground_truth]
+    test_text_context = [text.replace('__eot__', '</s>') for text in test_text_context]
+    test_text_ground_truth = [text.replace('__eot__', '</s>') for text in test_text_ground_truth]
+
+    return train_text_context, train_text_utterance, val_text_context, val_text_ground_truth, test_text_context, test_text_ground_truth
 
 
 def add_tokens_to_lists(input_lists, input_ids):
@@ -41,29 +66,7 @@ def get_last_turn(token_ids, eot_id):
     return token_ids[start_of_last_turn_pos:]
 
 
-# Create training data for generation, only save data if label = 1
-train_gen_df = train_df[train_df['Label'] == 1].copy()
-train_text_context = train_gen_df['Context'].astype(str).tolist()
-train_text_utterance = train_gen_df['Utterance'].astype(str).tolist()
-
-# Create validation data for generation
-val_text_context = val_df['Context'].astype(str).tolist()
-val_text_ground_truth = val_df['Ground Truth Utterance'].astype(str).tolist()
-
-# Create test data for generation
-test_text_context = test_df['Context'].astype(str).tolist()
-test_text_ground_truth = test_df['Ground Truth Utterance'].astype(str).tolist()
-
-# Replace all __eot__ strings with </s>
-train_text_context = [text.replace('__eot__', '</s>') for text in train_text_context]
-train_text_utterance = [text.replace('__eot__', '</s>') for text in train_text_utterance]
-val_text_context = [text.replace('__eot__', '</s>') for text in val_text_context]
-val_text_ground_truth = [text.replace('__eot__', '</s>') for text in val_text_ground_truth]
-test_text_context = [text.replace('__eot__', '</s>') for text in test_text_context]
-test_text_ground_truth = [text.replace('__eot__', '</s>') for text in test_text_ground_truth]
-
-
-def split_window_and_tokenize(contexts, utterances):
+def split_window_and_tokenize(contexts, utterances, tokenizer, max_length=1024):
     input_ids_list = []
     attention_mask_list = []
     current_context = 0
@@ -107,7 +110,6 @@ def split_window_and_tokenize(contexts, utterances):
         # tokenize text
         token_ids = tokenizer.encode(sample)
         if len(token_ids) > max_length:
-            print(f"Skipping sample because it is too long: {sample}")
             continue
         dataset.append({"text": sample})
         input_ids_list.append(torch.tensor(token_ids))
@@ -116,35 +118,41 @@ def split_window_and_tokenize(contexts, utterances):
     return input_ids_list, attention_mask_list, dataset
 
 
-max_length = 1024
-eot_id = tokenizer.convert_tokens_to_ids('</s>')
+def main():
+    data_folder = 'data/ubuntu/'
+    train_text_context, train_text_utterance, val_text_context, val_text_ground_truth, test_text_context, test_text_ground_truth = load_data()
+    tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-chat-hf', padding_side='right', use_fast=True)
+    tokenizer.pad_token = '<pad>'
 
-train_ids, train_masks, train_dataset = split_window_and_tokenize(train_text_context, train_text_utterance)
-val_ids, val_masks, val_dataset = split_window_and_tokenize(val_text_context, val_text_ground_truth)
-test_ids, test_masks, test_dataset = split_window_and_tokenize(test_text_context, test_text_ground_truth)
+    train_ids, train_masks, train_dataset = split_window_and_tokenize(train_text_context, train_text_utterance)
+    val_ids, val_masks, val_dataset = split_window_and_tokenize(val_text_context, val_text_ground_truth)
+    test_ids, test_masks, test_dataset = split_window_and_tokenize(test_text_context, test_text_ground_truth)
 
-train_encodings = {
-    'input_ids': train_ids,
-    'attention_mask': train_masks,
-}
+    train_encodings = {
+        'input_ids': train_ids,
+        'attention_mask': train_masks,
+    }
 
-val_encodings = {
-    'input_ids': val_ids,
-    'attention_mask': val_masks
-}
+    val_encodings = {
+        'input_ids': val_ids,
+        'attention_mask': val_masks
+    }
 
-test_encodings = {
-    'input_ids': test_ids,
-    'attention_mask': test_masks
-}
+    test_encodings = {
+        'input_ids': test_ids,
+        'attention_mask': test_masks
+    }
 
-# Save the tokenized train data
-torch.save(train_encodings, data_folder + 'train_encodings_llama.pt')
-torch.save(val_encodings, data_folder + 'val_encodings_llama.pt')
-torch.save(test_encodings, data_folder + 'test_encodings_llama.pt')
+    # Save the tokenized train data
+    torch.save(train_encodings, data_folder + 'train_encodings_llama.pt')
+    torch.save(val_encodings, data_folder + 'val_encodings_llama.pt')
+    torch.save(test_encodings, data_folder + 'test_encodings_llama.pt')
+
+    # save the train dataset
+    pd.DataFrame(train_dataset).to_csv(data_folder + 'train_dataset.csv', index=False)
+    pd.DataFrame(val_dataset).to_csv(data_folder + 'val_dataset.csv', index=False)
+    pd.DataFrame(test_dataset).to_csv(data_folder + 'test_dataset.csv', index=False)
 
 
-# save the train dataset
-pd.DataFrame(train_dataset).to_csv(data_folder + 'train_dataset.csv', index=False)
-pd.DataFrame(val_dataset).to_csv(data_folder + 'val_dataset.csv', index=False)
-pd.DataFrame(test_dataset).to_csv(data_folder + 'test_dataset.csv', index=False)
+if __name__ == '__main__':
+    pass
