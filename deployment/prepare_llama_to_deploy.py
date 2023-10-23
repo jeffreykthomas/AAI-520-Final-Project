@@ -1,6 +1,9 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
 import torch
 
+# Procedure based upon
+# https://towardsai.net/p/machine-learning/gptq-quantization-on-a-llama-2-7b-fine-tuned-model-with-huggingface
+
 # Set the model to load
 hf_model_repo = 'jeffreykthomas/llama2-7b-ubuntu-generation'
 # Load the tokenizer

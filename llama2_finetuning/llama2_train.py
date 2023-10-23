@@ -61,6 +61,8 @@ class PadCollate():
 
 model_name = 'meta-llama/Llama-2-7b-chat-hf'
 
+# Setup based on
+# https://artificialcorner.com/mastering-llama-2-a-comprehensive-guide-to-fine-tuning-in-google-colab-bedfcc692b7f
 # Set base model loading in 4-bits
 use_4bit = True
 

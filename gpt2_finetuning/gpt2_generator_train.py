@@ -52,6 +52,9 @@ else:
 batch_size = parser.parse_args().batch_size
 
 
+# Some detail inspired by
+# https://towardsdatascience.com/make-your-own-rick-sanchez-bot-with-transformers-and-dialogpt-fine-tuning-f85e6d1f4e30
+
 # Create a custom dataset
 class CustomDataset(Dataset):
     def __init__(self, input_encodings):

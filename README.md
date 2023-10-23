@@ -52,4 +52,19 @@ The GPT-3 model was finetuned using the [OpenAI](https://beta.openai.com/) API. 
 The Llama2 model was finetuned using the [Huggingface](https://huggingface.co/transformers/model_doc/gpt2.html#gpt2lmheadmodel) library. The model was trained for 3 epochs. The training script can be found in the llama2_finetuning folder. In particular, we used QLora for the finetuning process, and then AutoGPTQ to quantize the model for faster inference and easier deployment.
 
 ## Results:
-To be determined...
+### Bleu Score:
+![Bleu Score](results/bleu.jpg)
+
+### Rouge Score:
+![Rouge Score](results/rouge.jpg)
+### Perplexity:
+![Perplexity](results/perplexity.jpg)
+
+## Deployment
+The deployment of the chatbot was done using Quasar and Google Cloud Functions. Some details of the deployment can be found in the deployment folder. The chatbot can be accessed here: 
+[Ubuntu Chat](https://jtdesigns.app/ubuntu-chat)
+
+## References:
+1. Norouzi, A. (2023, September 3). Mastering Llama 2: A Comprehensive Guide to Fine-Tuning in Google Colab. Artificial Corner. [Link](https://artificialcorner.com/mastering-llama-2-a-comprehensive-guide-to-fine-tuning-in-google-colab-bedfcc692b7f)
+2. Editorial Team. (2023, September 8). GPTQ Quantization on a Llama 2 7B Fine-Tuned Model With HuggingFace. Towards AI. [Link](https://towardsai.net/p/machine-learning/gptq-quantization-on-a-llama-2-7b-fine-tuned-model-with-huggingface)
+3. Neskorozhenyi, R. (2020, June 8). Make your own Rick Sanchez (bot) with Transformers and DialoGPT fine-tuning. Teach GPT-2 to write like a mad scientist. Towards Data Science. [Link](https://towardsdatascience.com/make-your-own-rick-sanchez-bot-with-transformers-and-dialogpt-fine-tuning-f55e7c0eec4a)
