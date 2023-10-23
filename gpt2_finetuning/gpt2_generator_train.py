@@ -20,37 +20,24 @@ parser.add_argument('--model_size',
                     choices=['medium', 'large'])
 parser.add_argument('--num_epochs', type=int, default=3, help='Number of epochs to train for')
 parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training')
-parser.add_argument('--model_type',
-                    type=str,
-                    default='gpt2',
-                    help='Type of model to train',
-                    choices=['gpt2', 'llama'])
 
 model_size = parser.parse_args().model_size
 num_epochs = parser.parse_args().num_epochs
-model_type = parser.parse_args().model_type
 
-if model_type == 'gpt2':
-    model_name = 'microsoft/DialoGPT-' + model_size
-    tokenizer_name = 'tokenizer_' + model_size
-    # Load the tokenized train data
-    if model_size == 'medium':
-        train_encodings = torch.load(data_folder + 'train_encodings.pt')
-        val_encodings = torch.load(data_folder + 'val_encodings.pt')
-        test_encodings = torch.load(data_folder + 'test_encodings.pt')
-    else:
-        train_encodings = torch.load(data_folder + 'train_encodings_large.pt')
-        val_encodings = torch.load(data_folder + 'val_encodings_large.pt')
-        test_encodings = torch.load(data_folder + 'test_encodings_large.pt')
+model_name = 'microsoft/DialoGPT-' + model_size
+tokenizer_name = 'tokenizer_' + model_size
+# Load the tokenized train data
+if model_size == 'medium':
+    train_encodings = torch.load(data_folder + 'train_encodings.pt')
+    val_encodings = torch.load(data_folder + 'val_encodings.pt')
+    test_encodings = torch.load(data_folder + 'test_encodings.pt')
 else:
-    model_name = 'TheBloke/Llama-2-7b-Chat-GPTQ'
-    tokenizer_name = 'TheBloke/Llama-2-7b-Chat-GPTQ'
-    train_encodings = torch.load(data_folder + 'train_encodings_llama.pt')
-    val_encodings = torch.load(data_folder + 'val_encodings_llama.pt')
-    test_encodings = torch.load(data_folder + 'test_encodings_llama.pt')
+    train_encodings = torch.load(data_folder + 'train_encodings_large.pt')
+    val_encodings = torch.load(data_folder + 'val_encodings_large.pt')
+    test_encodings = torch.load(data_folder + 'test_encodings_large.pt')
+
 
 batch_size = parser.parse_args().batch_size
-
 
 # Some detail inspired by
 # https://towardsdatascience.com/make-your-own-rick-sanchez-bot-with-transformers-and-dialogpt-fine-tuning-f85e6d1f4e30
@@ -78,15 +65,10 @@ class PadCollate():
 
         for idx, seqs in enumerate(batch):
             pad_len = max_len - len(seqs['input_ids'])  # Calculate how much padding is needed
-            # if gpt2 pad on the left, else pad on the right
-            if model_type == 'gpt2':
-                input_ids.append(F.pad(torch.LongTensor(seqs['input_ids'].long()), (pad_len, 0), value=self.pad_id))
-                attn_masks.append(
-                    F.pad(torch.LongTensor(seqs['attention_mask'].long()), (pad_len, 0), value=0))
-            else:
-                input_ids.append(F.pad(torch.LongTensor(seqs['input_ids'].long()), (0, pad_len), value=self.pad_id))
-                attn_masks.append(
-                    F.pad(torch.LongTensor(seqs['attention_mask'].long()), (0, pad_len), value=0))
+
+            input_ids.append(F.pad(torch.LongTensor(seqs['input_ids'].long()), (pad_len, 0), value=self.pad_id))
+            attn_masks.append(
+                F.pad(torch.LongTensor(seqs['attention_mask'].long()), (pad_len, 0), value=0))
 
         # Stack the tensors along a new dimension
         input_ids = torch.stack(input_ids)
@@ -116,117 +98,17 @@ def remove_pad_tokens(decoded_text, pad_token):
     return decoded_text.replace(pad_token, '')
 
 
-def evaluate_bleu(model, val_loader, tokenizer, device):
-    model.eval()
-    bleu_scores = []
-    num_samples = 20
-    random_indices = np.random.randint(0, len(val_loader), num_samples)
-    sample_idx = np.random.choice(random_indices)
-    num_samples_evaluated = 0
-    print('Length of tokenizer:', len(tokenizer))
-    print('Vocab size:', model.module.config.vocab_size)
-
-    # Select random num_samples from the validation set
-    with torch.no_grad():
-        for val_idx, batch in enumerate(val_loader):
-            # Prepare input and target
-            if val_idx in random_indices:
-                num_samples_evaluated += 1
-                print(f'\rGenerating responses for validation sample number {num_samples_evaluated}/{num_samples}',
-                      end='\n', flush=True)
-                contexts = batch['input_ids'].to(device)
-                attention_masks = batch['attention_mask'].to(device)
-                ground_truth = batch['input_ids'].to(device)
-
-                generation_config = GenerationConfig(max_length=612,
-                                                     min_new_tokens=32,
-                                                     num_return_sequences=1,
-                                                     repetition_penalty=1.1,
-                                                     do_sample=True,
-                                                     pad_token_id=tokenizer.eos_token_id)
-
-                generated_responses = model.module.generate(contexts,
-                                                            attention_mask=attention_masks,
-                                                            **generation_config.to_dict())
-                if val_idx == sample_idx:
-                    # print one untruncated generated response
-                    print(f'Generated response: {tokenizer.decode(generated_responses[0], skip_special_tokens=False)}')
-
-                # Remove context tokens from generated responses. First, remove the context tokens for each response
-                # from the start of the generated responses
-                truncated_generated_responses = [generated_response[len(context):] for generated_response, context in
-                                                 zip(generated_responses, contexts)]
-                decoded_generated_responses = [tokenizer.decode(generated_response, skip_special_tokens=False) for
-                                               generated_response in truncated_generated_responses]
-                # Remove the padding tokens from the end of the generated responses
-                decoded_generated_responses = [remove_pad_tokens(decoded_generated_response, tokenizer.pad_token) for
-                                               decoded_generated_response in decoded_generated_responses]
-
-                # Remove the input tokens from the ground truth and decode
-                ground_truth = [ground_truth_item[len(context):] for ground_truth_item, context in
-                                zip(ground_truth, contexts)]
-                decoded_truth = [tokenizer.decode(t, skip_special_tokens=False) for t in ground_truth]
-                # Remove the padding tokens from the end of the ground truth
-                decoded_truth = [remove_pad_tokens(decoded_truth_item, tokenizer.pad_token) for decoded_truth_item in
-                                 decoded_truth]
-
-                # print 1 sample of generated responses and ground truth from the random_indices
-                if val_idx == sample_idx:
-                    print(
-                        f'Context: {remove_pad_tokens(tokenizer.decode(contexts[0], skip_special_tokens=False), tokenizer.pad_token)}')
-                    print(f'Generated response: {decoded_generated_responses[0]}')
-                    print(f'Ground truth: {decoded_truth[0]}')
-                # Calculate BLEU score
-                for gen_response, truth in zip(decoded_generated_responses, decoded_truth):
-                    bleu_score = sentence_bleu([truth], gen_response)
-                    bleu_scores.append(bleu_score)
-
-    avg_bleu_score = sum(bleu_scores) / len(bleu_scores)
-
-    print(f'\rCurrent BLEU score: {avg_bleu_score}')
-
-
 def run_training():
     # Use wandb to track training
     wandb_project = 'aai-520-final-project'
-    if model_type == 'gpt2':
-        wandb_run_name = 'dialo-' + model_size + '-ubuntu-generation'
-    else:
-        wandb_run_name = 'llama-2-7b-ubuntu-generation'
+    wandb_run_name = 'dialo-' + model_size + '-ubuntu-generation'
 
     wandb.init(project=wandb_project, name=wandb_run_name)
 
     # Load the tokenizer
-    if model_type == 'gpt2':
-        tokenizer = AutoTokenizer.from_pretrained(data_folder + tokenizer_name)
-        tokenizer.pad_token = tokenizer.eos_token
-        model = AutoModelForCausalLM.from_pretrained(model_name)
-    else:
-        tokenizer = AutoTokenizer.from_pretrained('TheBloke/Llama-2-7b-Chat-GPTQ', padding_side='right', use_fast=True)
-        tokenizer.pad_token = '<pad>'
-        # use_4bit = True
-        #
-        # # Compute dtype for 4-bit base models
-        # bnb_4bit_compute_dtype = "float16"
-        #
-        # # Quantization type (fp4 or nf4)
-        # bnb_4bit_quant_type = "nf4"
-        #
-        # # Activate nested quantization for 4-bit base models (double quantization)
-        # use_nested_quant = False
-        #
-        # # Get the type
-        # compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
-        #
-        # # BitsAndBytesConfig int-4 config
-        # bnb_config = BitsAndBytesConfig(
-        #     load_in_4bit=use_4bit,
-        #     bnb_4bit_quant_type=bnb_4bit_quant_type,
-        #     bnb_4bit_compute_dtype=compute_dtype,
-        #     bnb_4bit_use_double_quant=use_nested_quant,
-        # )
-        model = AutoModelForCausalLM.from_pretrained(model_name,
-                                                     torch_dtype=torch.float16)
+    tokenizer = AutoTokenizer.from_pretrained(data_folder + tokenizer_name)
+    tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(model_name)
 
     print('Length of tokenizer:', len(tokenizer))
 
@@ -315,7 +197,8 @@ def run_training():
                 scheduler.step()
 
                 print(
-                    f'\rEpoch {epoch + 1}, batch: {batch_idx + 1}/{len(train_loader)}, scaled_loss: {loss.item()}, effective_loss: {loss.item() * accumulation_steps}',
+                    f'\rEpoch {epoch + 1}, batch: {batch_idx + 1}/{len(train_loader)}, scaled_loss: {loss.item()}, '
+                    f'effective_loss: {loss.item() * accumulation_steps}',
                     end='',
                     flush=True)
 
