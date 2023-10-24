@@ -46,7 +46,7 @@ We ended up with Dialo from Microsoft, an already fine-tuned gpt2 for dialogue g
 We trained both the medium and large sizes of the model.
 
 ## GPT-3 Finetuning:
-The GPT-3 model was finetuned using the [OpenAI](https://beta.openai.com/) API. The model was trained for a single epoch. The training script can be found in the gpt3_finetuning folder.
+The GPT-3 model was finetuned using the [OpenAI](https://beta.openai.com/) API. The model was trained for a single epoch on less than 1% of the data (for cost reasons). The training script can be found in the gpt3_finetuning folder.
 
 ## Llama2 Finetuning:
 The Llama2 model was finetuned using the [Huggingface](https://huggingface.co/transformers/model_doc/gpt2.html#gpt2lmheadmodel) library. The model was trained for 3 epochs. The training script can be found in the llama2_finetuning folder. In particular, we used QLora for the finetuning process, and then AutoGPTQ to quantize the model for faster inference and easier deployment.
